@@ -11,7 +11,7 @@ for _stream in ('stdin', 'stdout', 'stderr'):
     if hasattr(_cur, 'buffer') and _cur.encoding and _cur.encoding.lower().replace('-', '') != 'utf8':
         setattr(sys, _stream, io.TextIOWrapper(_cur.buffer, encoding='utf-8'))
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
 from src.store.database import Database
 

@@ -3,10 +3,25 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import unittest
 
-from src.runtime.watch_runner import generate_search_queries, select_sensors
+from src.runtime.watch_runner import _sanitize_watch_text, generate_search_queries, select_sensors
 
 
 class WatchRunnerSelectionTests(unittest.TestCase):
+    def test_sanitize_watch_text_removes_preprocess_contract_noise(self) -> None:
+        raw = """
+找到房产相关的用户抱怨和小众需求
+
+<!-- discoverneeds-signex-preprocess-contract:v1 -->
+## DiscoverNeeds preprocess output contract
+For every emitted item, return preprocess fields using this contract.
+- preprocessStatus tri-state semantics: valid | irrelevant | invalid
+```json
+{"preprocessStatus":"valid"}
+```
+"""
+        cleaned = _sanitize_watch_text(raw)
+        self.assertEqual(cleaned, "找到房产相关的用户抱怨和小众需求")
+
     def test_sensor_selection_for_academic_watch(self) -> None:
         intent = """
 # ai-research

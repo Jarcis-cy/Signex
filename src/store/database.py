@@ -40,6 +40,7 @@ class Database:
                 UNIQUE(source, source_id)
             )
         """)
+        self._ensure_preprocess_columns(cursor)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS analyses (
@@ -72,6 +73,28 @@ class Database:
         """)
 
         self.connection.commit()
+
+    @staticmethod
+    def _ensure_preprocess_columns(cursor: sqlite3.Cursor) -> None:
+        cursor.execute("PRAGMA table_info(items)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        expected_columns = {
+            "preprocessStatus": "TEXT",
+            "isRelevant": "INTEGER",
+            "normalizedTitle": "TEXT",
+            "normalizedContent": "TEXT",
+            "preprocessTags": "TEXT",
+            "preprocessReason": "TEXT",
+            "preprocessError": "TEXT",
+            "preprocessVersion": "INTEGER",
+            "preprocessRunId": "TEXT",
+            "preprocessedAt": "TEXT",
+        }
+
+        for column_name, column_type in expected_columns.items():
+            if column_name in existing_columns:
+                continue
+            cursor.execute(f"ALTER TABLE items ADD COLUMN {column_name} {column_type}")
 
     def save_items(self, items: list[SensorItem]) -> int:
         """Save items to database with deduplication.
@@ -149,6 +172,156 @@ class Database:
         cursor.execute(query, params)
 
         return [dict(row) for row in cursor.fetchall()]
+
+    def update_preprocess_fields(
+        self,
+        item_id: int,
+        *,
+        preprocess_status: str,
+        is_relevant: bool,
+        normalized_title: str | None,
+        normalized_content: str | None,
+        preprocess_tags: list[str] | None,
+        preprocess_reason: str | None,
+        preprocess_error: str | None,
+        preprocess_version: int,
+        preprocess_run_id: str,
+        preprocessed_at: str,
+    ) -> None:
+        if not self.connection:
+            raise RuntimeError("Database not initialized. Call init() first.")
+
+        cursor = self.connection.cursor()
+        cursor.execute(
+            """
+            UPDATE items
+            SET
+              preprocessStatus = ?,
+              isRelevant = ?,
+              normalizedTitle = ?,
+              normalizedContent = ?,
+              preprocessTags = ?,
+              preprocessReason = ?,
+              preprocessError = ?,
+              preprocessVersion = ?,
+              preprocessRunId = ?,
+              preprocessedAt = ?
+            WHERE id = ?
+            """,
+            (
+                preprocess_status,
+                1 if is_relevant else 0,
+                normalized_title,
+                normalized_content,
+                json.dumps(preprocess_tags, ensure_ascii=False) if preprocess_tags else None,
+                preprocess_reason,
+                preprocess_error,
+                preprocess_version,
+                preprocess_run_id,
+                preprocessed_at,
+                item_id,
+            ),
+        )
+        self.connection.commit()
+
+    def upsert_item_with_preprocess(
+        self,
+        *,
+        source: str,
+        source_id: str,
+        title: str,
+        url: str | None,
+        content: str,
+        metadata: dict[str, Any] | None,
+        fetched_at: str,
+        published_at: str | None,
+        preprocess_status: str,
+        is_relevant: bool,
+        normalized_title: str | None,
+        normalized_content: str | None,
+        preprocess_tags: list[str] | None,
+        preprocess_reason: str | None,
+        preprocess_error: str | None,
+        preprocess_version: int,
+        preprocess_run_id: str,
+        preprocessed_at: str,
+    ) -> int:
+        """Insert or update one item and return its id."""
+        if not self.connection:
+            raise RuntimeError("Database not initialized. Call init() first.")
+
+        cursor = self.connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO items (
+              source,
+              source_id,
+              title,
+              url,
+              content,
+              metadata,
+              fetched_at,
+              published_at,
+              preprocessStatus,
+              isRelevant,
+              normalizedTitle,
+              normalizedContent,
+              preprocessTags,
+              preprocessReason,
+              preprocessError,
+              preprocessVersion,
+              preprocessRunId,
+              preprocessedAt
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source, source_id) DO UPDATE SET
+              title = excluded.title,
+              url = excluded.url,
+              content = excluded.content,
+              metadata = excluded.metadata,
+              fetched_at = excluded.fetched_at,
+              published_at = excluded.published_at,
+              preprocessStatus = excluded.preprocessStatus,
+              isRelevant = excluded.isRelevant,
+              normalizedTitle = excluded.normalizedTitle,
+              normalizedContent = excluded.normalizedContent,
+              preprocessTags = excluded.preprocessTags,
+              preprocessReason = excluded.preprocessReason,
+              preprocessError = excluded.preprocessError,
+              preprocessVersion = excluded.preprocessVersion,
+              preprocessRunId = excluded.preprocessRunId,
+              preprocessedAt = excluded.preprocessedAt
+            """,
+            (
+                source,
+                source_id,
+                title,
+                url,
+                content,
+                json.dumps(metadata, ensure_ascii=False) if metadata else None,
+                fetched_at,
+                published_at,
+                preprocess_status,
+                1 if is_relevant else 0,
+                normalized_title,
+                normalized_content,
+                json.dumps(preprocess_tags, ensure_ascii=False) if preprocess_tags else None,
+                preprocess_reason,
+                preprocess_error,
+                preprocess_version,
+                preprocess_run_id,
+                preprocessed_at,
+            ),
+        )
+        cursor.execute(
+            "SELECT id FROM items WHERE source = ? AND source_id = ? LIMIT 1",
+            (source, source_id),
+        )
+        row = cursor.fetchone()
+        self.connection.commit()
+        if row is None:
+            raise RuntimeError("Failed to resolve upserted item id")
+        return int(row["id"])
 
     def get_unanalyzed_items(
         self,
